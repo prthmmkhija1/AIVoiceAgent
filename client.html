@@ -51,6 +51,8 @@
     }
 
     .status-dot.connected { background: #44ff44; }
+    .status-dot.connecting { background: #ffaa44; animation: pulse 1s infinite; }
+    .status-dot.reconnecting { background: #ff8844; animation: pulse 0.7s infinite; }
     .status-dot.listening { background: #44aaff; animation: pulse 1s infinite; }
     .status-dot.thinking  { background: #ffaa44; animation: pulse 0.5s infinite; }
     .status-dot.speaking  { background: #aa44ff; animation: pulse 0.8s infinite; }
@@ -200,10 +202,62 @@
     let ws = null;
     let mediaStream = null;
     let audioContext = null;
-    let processor = null;
+    let processor = null;      // ScriptProcessor (fallback)
+    let workletNode = null;    // AudioWorklet (modern)
     let isRecording = false;
+    let useAudioWorklet = true; // Try AudioWorklet first
 
     const WS_URL = 'ws://localhost:8080';
+
+    // ─── Auto-Reconnect Configuration ────────────────────────
+    let reconnectAttempts = 0;
+    let reconnectTimeout = null;
+    let intentionalDisconnect = false;
+    const RECONNECT_CONFIG = {
+      maxAttempts: 10,
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      backoffMultiplier: 1.5,
+    };
+
+    /**
+     * Calculate reconnect delay with exponential backoff
+     */
+    function getReconnectDelay() {
+      const delay = RECONNECT_CONFIG.initialDelayMs * Math.pow(RECONNECT_CONFIG.backoffMultiplier, reconnectAttempts);
+      return Math.min(delay, RECONNECT_CONFIG.maxDelayMs);
+    }
+
+    /**
+     * Schedule a reconnection attempt
+     */
+    function scheduleReconnect() {
+      if (intentionalDisconnect) return;
+      if (reconnectAttempts >= RECONNECT_CONFIG.maxAttempts) {
+        addErrorMessage(`Failed to reconnect after ${RECONNECT_CONFIG.maxAttempts} attempts. Click Connect to retry.`);
+        return;
+      }
+
+      const delay = getReconnectDelay();
+      reconnectAttempts++;
+      
+      setStatus('reconnecting', `Reconnecting in ${Math.round(delay / 1000)}s... (${reconnectAttempts}/${RECONNECT_CONFIG.maxAttempts})`);
+      addSystemMessage(`Connection lost. Reconnecting in ${Math.round(delay / 1000)} seconds...`);
+
+      reconnectTimeout = setTimeout(() => {
+        connectWS(true);  // true = is reconnect attempt
+      }, delay);
+    }
+
+    /**
+     * Cancel any pending reconnect
+     */
+    function cancelReconnect() {
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+    }
 
     // ─── DOM Elements ────────────────────────────────────────
     const statusDot = document.getElementById('statusDot');
@@ -215,22 +269,42 @@
     let audioQueue = [];        // Queue of audio buffers to play
     let isPlaying = false;
     let playbackContext = null;
+    let currentAudioSource = null;  // Track current playing source for barge-in
+
+    /**
+     * Stop any currently playing audio (barge-in support)
+     */
+    function stopAudioPlayback() {
+      audioQueue = [];
+      isPlaying = false;
+      if (currentAudioSource) {
+        try {
+          currentAudioSource.stop();
+        } catch (e) { /* Already stopped */ }
+        currentAudioSource = null;
+      }
+    }
 
     // ─── WebSocket Connection ────────────────────────────────
-    function connectWS() {
+    function connectWS(isReconnect = false) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         addSystemMessage('Already connected');
         return;
       }
 
-      setStatus('connecting', 'Connecting...');
+      // Cancel any pending reconnect
+      cancelReconnect();
+      intentionalDisconnect = false;
+
+      setStatus('connecting', isReconnect ? 'Reconnecting...' : 'Connecting...');
       ws = new WebSocket(WS_URL);
 
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
+        reconnectAttempts = 0;  // Reset on successful connect
         setStatus('connected', 'Connected — Press the mic to start talking');
-        addSystemMessage('Connected to AI Voice Agent');
+        addSystemMessage(isReconnect ? 'Reconnected to AI Voice Agent' : 'Connected to AI Voice Agent');
       };
 
       ws.onmessage = (event) => {
@@ -245,9 +319,15 @@
         }
       };
 
-      ws.onclose = () => {
-        setStatus('disconnected', 'Disconnected');
+      ws.onclose = (event) => {
         stopRecording();
+        
+        // Only auto-reconnect if not intentional and not a clean close
+        if (!intentionalDisconnect && event.code !== 1000) {
+          scheduleReconnect();
+        } else {
+          setStatus('disconnected', 'Disconnected');
+        }
       };
 
       ws.onerror = (error) => {
@@ -257,9 +337,15 @@
     }
 
     function disconnectWS() {
+      intentionalDisconnect = true;
+      cancelReconnect();
+      reconnectAttempts = 0;
+      
       if (ws) {
-        ws.send(JSON.stringify({ type: 'end' }));
-        ws.close();
+        try {
+          ws.send(JSON.stringify({ type: 'end' }));
+        } catch (e) { /* Ignore if already closed */ }
+        ws.close(1000, 'User disconnect');  // 1000 = normal close
         ws = null;
       }
       stopRecording();
@@ -301,6 +387,12 @@
           setStatus('connected', 'Connected — Press the mic to talk');
           break;
 
+        case 'audio_interrupted':
+          // Barge-in: stop current audio playback
+          stopAudioPlayback();
+          setStatus('listening', 'Listening... Speak now!');
+          break;
+
         case 'error':
           addErrorMessage(msg.message);
           break;
@@ -323,6 +415,12 @@
 
     async function startRecording() {
       try {
+        // Barge-in: Stop any playing audio and notify server
+        if (isPlaying) {
+          stopAudioPlayback();
+          ws.send(JSON.stringify({ type: 'interrupt' }));
+        }
+
         mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate: 16000,
@@ -335,24 +433,52 @@
         audioContext = new AudioContext({ sampleRate: 16000 });
         const source = audioContext.createMediaStreamSource(mediaStream);
 
-        // ScriptProcessor to capture audio data
-        processor = audioContext.createScriptProcessor(4096, 1, 1);
-        processor.onaudioprocess = (event) => {
-          if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
-
-          const inputData = event.inputBuffer.getChannelData(0);
-          // Convert Float32 → Int16 (linear16)
-          const int16 = new Int16Array(inputData.length);
-          for (let i = 0; i < inputData.length; i++) {
-            const s = Math.max(-1, Math.min(1, inputData[i]));
-            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        // Try AudioWorklet first (modern, runs on separate thread)
+        if (useAudioWorklet && audioContext.audioWorklet) {
+          try {
+            await audioContext.audioWorklet.addModule('audio-processor.js');
+            
+            workletNode = new AudioWorkletNode(audioContext, 'microphone-processor');
+            workletNode.port.onmessage = (event) => {
+              if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
+              if (event.data.type === 'audio') {
+                ws.send(event.data.buffer);
+              }
+            };
+            
+            source.connect(workletNode);
+            workletNode.connect(audioContext.destination);
+            
+            console.log('🎤 Using AudioWorklet (modern API)');
+          } catch (workletError) {
+            console.warn('AudioWorklet failed, falling back to ScriptProcessor:', workletError);
+            useAudioWorklet = false;
+            // Fall through to ScriptProcessor
           }
+        }
+        
+        // Fallback: ScriptProcessor (deprecated but widely supported)
+        if (!useAudioWorklet || !workletNode) {
+          processor = audioContext.createScriptProcessor(4096, 1, 1);
+          processor.onaudioprocess = (event) => {
+            if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-          ws.send(int16.buffer);
-        };
+            const inputData = event.inputBuffer.getChannelData(0);
+            // Convert Float32 → Int16 (linear16)
+            const int16 = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              const s = Math.max(-1, Math.min(1, inputData[i]));
+              int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
 
-        source.connect(processor);
-        processor.connect(audioContext.destination);
+            ws.send(int16.buffer);
+          };
+
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+          
+          console.log('🎤 Using ScriptProcessor (fallback)');
+        }
 
         isRecording = true;
         micBtn.classList.add('active');
@@ -368,6 +494,14 @@
       isRecording = false;
       micBtn.classList.remove('active');
 
+      // Stop AudioWorklet
+      if (workletNode) {
+        workletNode.port.postMessage({ type: 'stop' });
+        workletNode.disconnect();
+        workletNode = null;
+      }
+      
+      // Stop ScriptProcessor (fallback)
       if (processor) {
         processor.disconnect();
         processor = null;
@@ -419,6 +553,7 @@
         source.connect(playbackContext.destination);
 
         source.onended = () => {
+          currentAudioSource = null;
           // Check if more audio arrived while playing
           if (audioQueue.length > 0) {
             playNextAudio();
@@ -427,6 +562,7 @@
           }
         };
 
+        currentAudioSource = source;  // Track for barge-in
         source.start();
       } catch (error) {
         console.error('Playback error:', error);

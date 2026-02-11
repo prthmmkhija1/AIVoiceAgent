@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { config } from '../../config/config.js';
 import persona from './persona.js';
+import { withRetry } from '../../utils/retry.js';
 
 /**
  * LLM Provider Service (Grok via X.AI)
@@ -9,6 +10,7 @@ import persona from './persona.js';
  * Uses OpenAI-compatible API format (X.AI provides this).
  * Injects persona system prompt into every request.
  * Supports both regular and streaming responses.
+ * Includes automatic retry with exponential backoff for resilience.
  */
 class LLMProvider {
   constructor() {
@@ -21,72 +23,88 @@ class LLMProvider {
     this.model = config.llm.model;
     this.systemPrompt = persona.getSystemPrompt();
 
+    // Retry configuration for LLM requests
+    this.retryConfig = {
+      maxRetries: 3,
+      initialDelayMs: 500,
+      maxDelayMs: 3000,
+      backoffMultiplier: 2,
+    };
+
     console.log(`✅ [LLM] Initialized with Grok (${this.model})`);
     console.log(`👤 [LLM] Persona: ${persona.name} - ${persona.role}`);
   }
 
   /**
-   * Generate a complete response (non-streaming)
+   * Generate a complete response (non-streaming, with retry)
    * @param {Array} conversationHistory - Array of { role, content } messages
    * @returns {Promise<string>} - The LLM response text
    */
   async generateResponse(conversationHistory) {
-    try {
-      const messages = [
-        { role: 'system', content: this.systemPrompt },
-        ...conversationHistory,
-      ];
+    return withRetry(
+      async () => {
+        const messages = [
+          { role: 'system', content: this.systemPrompt },
+          ...conversationHistory,
+        ];
 
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages,
-        temperature: config.llm.temperature,
-        max_tokens: config.llm.maxTokens,
-        stream: false,
-      });
+        const response = await this.client.chat.completions.create({
+          model: this.model,
+          messages,
+          temperature: config.llm.temperature,
+          max_tokens: config.llm.maxTokens,
+          stream: false,
+        });
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new Error('LLM returned empty response');
+        const content = response.choices[0]?.message?.content;
+        if (!content) {
+          throw new Error('LLM returned empty response');
+        }
+
+        console.log(`🤖 [LLM] Response: "${content.substring(0, 80)}..."`);
+        return content;
+      },
+      {
+        config: this.retryConfig,
+        operationName: 'LLM',
       }
-
-      console.log(`🤖 [LLM] Response: "${content.substring(0, 80)}..."`);
-      return content;
-    } catch (error) {
-      console.error('❌ [LLM] Generation failed:', error.message);
-      throw error;
-    }
+    );
   }
 
   /**
    * Stream a response token-by-token (lower latency for TTS)
+   * Connection attempt is retried, then streaming proceeds.
    * @param {Array} conversationHistory - Array of { role, content } messages
    * @yields {string} - Individual text chunks as they arrive
    */
   async *streamResponse(conversationHistory) {
-    try {
-      const messages = [
-        { role: 'system', content: this.systemPrompt },
-        ...conversationHistory,
-      ];
+    const messages = [
+      { role: 'system', content: this.systemPrompt },
+      ...conversationHistory,
+    ];
 
-      const stream = await this.client.chat.completions.create({
-        model: this.model,
-        messages,
-        temperature: config.llm.temperature,
-        max_tokens: config.llm.maxTokens,
-        stream: true,
-      });
-
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) {
-          yield content;
-        }
+    // Retry the initial connection, then stream
+    const stream = await withRetry(
+      async () => {
+        return await this.client.chat.completions.create({
+          model: this.model,
+          messages,
+          temperature: config.llm.temperature,
+          max_tokens: config.llm.maxTokens,
+          stream: true,
+        });
+      },
+      {
+        config: this.retryConfig,
+        operationName: 'LLM-Stream',
       }
-    } catch (error) {
-      console.error('❌ [LLM] Streaming failed:', error.message);
-      throw error;
+    );
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        yield content;
+      }
     }
   }
 
@@ -106,34 +124,37 @@ class LLMProvider {
   }
 
   /**
-   * Summarize a conversation history for memory compaction
+   * Summarize a conversation history for memory compaction (with retry)
    * @param {Array} messages - Messages to summarize
    * @returns {Promise<string>} - Summary text
    */
   async summarize(messages) {
-    try {
-      const formatted = messages
-        .map(m => `${m.role}: ${m.content}`)
-        .join('\n');
+    return withRetry(
+      async () => {
+        const formatted = messages
+          .map(m => `${m.role}: ${m.content}`)
+          .join('\n');
 
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [
-          {
-            role: 'system',
-            content: 'Summarize this conversation concisely, preserving key facts and context. Write it as a brief narrative paragraph.',
-          },
-          { role: 'user', content: formatted },
-        ],
-        temperature: 0.3,
-        max_tokens: 200,
-      });
+        const response = await this.client.chat.completions.create({
+          model: this.model,
+          messages: [
+            {
+              role: 'system',
+              content: 'Summarize this conversation concisely, preserving key facts and context. Write it as a brief narrative paragraph.',
+            },
+            { role: 'user', content: formatted },
+          ],
+          temperature: 0.3,
+          max_tokens: 200,
+        });
 
-      return response.choices[0]?.message?.content || '';
-    } catch (error) {
-      console.error('❌ [LLM] Summarization failed:', error.message);
-      throw error;
-    }
+        return response.choices[0]?.message?.content || '';
+      },
+      {
+        config: this.retryConfig,
+        operationName: 'LLM-Summarize',
+      }
+    );
   }
 }
 

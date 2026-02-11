@@ -8,18 +8,20 @@
  *   Client ← WebSocket ← Deepgram TTS ← Grok LLM (+ Persona + Memory)
  */
 
-import { config, validateConfig } from './config/config.js';
-import WebSocketHandler from './ws/wsHandler.js';
-import DeepgramSTT from './services/deepgram/stt.js';
-import DeepgramTTS from './services/deepgram/tts.js';
-import LLMProvider from './services/llm/provider.js';
-import ConversationMemory from './services/memory/conversationMemory.js';
+import { config, validateConfig } from './src/config/config.js';
+import WebSocketHandler from './src/ws/wsHandler.js';
+import DeepgramSTT from './src/services/deepgram/stt.js';
+import DeepgramTTS from './src/services/deepgram/tts.js';
+import LLMProvider from './src/services/llm/provider.js';
+import ConversationMemory from './src/services/memory/conversationMemory.js';
+import LatencyMetrics from './src/utils/metrics.js';
 
 // ─── Global Services ────────────────────────────────────────
 let wsHandler;
 let tts;
 let llm;
 let memory;
+let metrics;
 
 /**
  * Main application entry point
@@ -38,6 +40,7 @@ async function main() {
   tts = new DeepgramTTS();
   llm = new LLMProvider();
   memory = new ConversationMemory();
+  metrics = new LatencyMetrics();
   wsHandler = new WebSocketHandler();
 
   console.log('✅ All services initialized');
@@ -53,6 +56,7 @@ async function main() {
   console.log(`   TTS: Deepgram (${config.tts.model})`);
   console.log(`   Memory: ${config.memory.useSummarization ? 'Summarization' : 'Sliding Window'} (max ${config.memory.maxMessages})`);
   console.log(`   WebSocket: ws://localhost:${config.wsPort}`);
+  console.log(`   Metrics: Enabled (latency tracking)`);
   console.log('');
   console.log('🎧 Waiting for client connections...');
 }
@@ -67,8 +71,9 @@ async function main() {
 async function handleNewConnection(ws, sessionId) {
   console.log(`\n🆕 [App] New session: ${sessionId}`);
 
-  // Create conversation memory for this session
+  // Create conversation memory and metrics tracking for this session
   memory.createSession(sessionId);
+  metrics.createSession(sessionId);
 
   // Create a per-client STT instance
   const stt = new DeepgramSTT();
@@ -77,11 +82,31 @@ async function handleNewConnection(ws, sessionId) {
   let utteranceBuffer = '';
   let isProcessing = false;  // Prevent overlapping LLM calls
 
+  // Barge-in support: AbortController to cancel current response
+  let currentAbortController = null;
+
+  /**
+   * Cancel any ongoing AI response (barge-in)
+   */
+  function abortCurrentResponse() {
+    if (currentAbortController) {
+      console.log(`⏹️ [App] Barge-in: Aborting current response for ${sessionId}`);
+      currentAbortController.abort();
+      currentAbortController = null;
+      wsHandler.sendJSON(ws, { type: 'audio_interrupted' });
+    }
+  }
+
   try {
     // Initialize STT with transcript handler
     await stt.connect(
       // On transcript received
       (result) => {
+        // Barge-in: If user starts speaking while AI is responding, interrupt
+        if (isProcessing && result.text.trim().length > 0) {
+          abortCurrentResponse();
+        }
+
         // Send transcript to client for display
         wsHandler.sendTranscript(ws, result.text, result.isFinal);
 
@@ -107,10 +132,18 @@ async function handleNewConnection(ws, sessionId) {
           utteranceBuffer = '';
           isProcessing = true;
 
+          // Start latency tracking for this request
+          metrics.startRequest(sessionId);
+          metrics.markSTTComplete(sessionId);
+
+          // Create abort controller for this response
+          currentAbortController = new AbortController();
+
           try {
-            await processUserMessage(ws, sessionId, userMessage);
+            await processUserMessage(ws, sessionId, userMessage, currentAbortController.signal);
           } finally {
             isProcessing = false;
+            currentAbortController = null;
           }
         }
       }
@@ -128,13 +161,20 @@ async function handleNewConnection(ws, sessionId) {
         switch (message.type) {
           case 'end':
             console.log(`🛑 [App] Session ending: ${sessionId}`);
+            abortCurrentResponse();
             stt.disconnect();
             memory.clearSession(sessionId);
+            metrics.clearSession(sessionId);
             break;
           case 'clear':
             console.log(`🗑️ [App] Clearing history: ${sessionId}`);
+            abortCurrentResponse();
             memory.clearSession(sessionId);
             memory.createSession(sessionId);
+            break;
+          case 'interrupt':
+            // Explicit barge-in request from client
+            abortCurrentResponse();
             break;
           default:
             console.log(`📨 [App] Unknown message type: ${message.type}`);
@@ -144,8 +184,17 @@ async function handleNewConnection(ws, sessionId) {
 
     // Cleanup when client disconnects
     ws.on('close', () => {
+      abortCurrentResponse();
       stt.disconnect();
+      
+      // Log session statistics before cleanup
+      const sessionStats = metrics.getSessionStats(sessionId);
+      if (sessionStats && sessionStats.requestCount > 0) {
+        console.log(`📊 [Metrics] Session ${sessionId} stats: ${sessionStats.requestCount} requests, avg E2E: ${sessionStats.avgLatency.endToEnd}ms`);
+      }
+      
       memory.clearSession(sessionId);
+      metrics.clearSession(sessionId);
       console.log(`🧹 [App] Cleaned up session: ${sessionId}`);
     });
 
@@ -158,16 +207,20 @@ async function handleNewConnection(ws, sessionId) {
 /**
  * Process a complete user message through the conversation pipeline:
  * 1. Add to memory
- * 2. Send to LLM (with persona + history)
- * 3. Convert response to speech
+ * 2. Stream LLM response sentence-by-sentence
+ * 3. Convert each sentence to speech immediately (lower latency)
  * 4. Stream audio back to client
  * 
  * @param {WebSocket} ws - Client WebSocket
  * @param {string} sessionId 
  * @param {string} userMessage - Complete user utterance
+ * @param {AbortSignal} abortSignal - Signal to abort processing (barge-in)
  */
-async function processUserMessage(ws, sessionId, userMessage) {
+async function processUserMessage(ws, sessionId, userMessage, abortSignal = null) {
   console.log(`\n👤 [User] ${userMessage}`);
+
+  // Helper to check if we should abort
+  const isAborted = () => abortSignal?.aborted === true;
 
   try {
     // 1. Store user message in memory
@@ -180,27 +233,133 @@ async function processUserMessage(ws, sessionId, userMessage) {
       memory.applyWindow(sessionId);
     }
 
+    // Check for barge-in
+    if (isAborted()) {
+      console.log(`⏹️ [App] Processing aborted before LLM call`);
+      return;
+    }
+
     // 3. Get conversation history
     const history = memory.getHistory(sessionId);
 
-    // 4. Generate LLM response
+    // 4. Stream LLM response with sentence-level TTS
     wsHandler.sendJSON(ws, { type: 'thinking' });
-    const aiResponse = await llm.streamAndCollect(history);
 
-    // 5. Store AI response in memory
-    memory.addMessage(sessionId, 'assistant', aiResponse);
+    let fullResponse = '';
+    let sentenceBuffer = '';
+    let isFirstSentence = true;
+    const sentenceEnders = /[.!?\n]/;
 
-    // 6. Send text response to client
-    wsHandler.sendResponse(ws, aiResponse);
+    // Signal audio streaming start
+    wsHandler.sendJSON(ws, {
+      type: 'audio_start',
+      sampleRate: config.tts.sample_rate,
+      encoding: config.tts.encoding,
+    });
 
-    // 7. Convert to speech with Deepgram TTS
-    wsHandler.sendJSON(ws, { type: 'speaking' });
-    const audioBuffer = await tts.synthesize(aiResponse);
+    // Stream LLM tokens and process sentence-by-sentence
+    let isFirstToken = true;
+    for await (const token of llm.streamResponse(history)) {
+      // Track first token latency
+      if (isFirstToken) {
+        metrics.markLLMFirstToken(sessionId);
+        isFirstToken = false;
+      }
 
-    // 8. Stream audio to client
-    wsHandler.streamAudio(ws, audioBuffer);
+      // Check for barge-in
+      if (isAborted()) {
+        console.log(`⏹️ [App] Barge-in during LLM streaming`);
+        wsHandler.sendJSON(ws, { type: 'audio_end' });
+        // Still save partial response if any
+        if (fullResponse.trim()) {
+          memory.addMessage(sessionId, 'assistant', fullResponse + ' [interrupted]');
+        }
+        return;
+      }
 
-    console.log(`🤖 [Nova] ${aiResponse}`);
+      fullResponse += token;
+      sentenceBuffer += token;
+
+      // Check if we have a complete sentence
+      if (sentenceEnders.test(token) && sentenceBuffer.trim().length > 0) {
+        const sentence = sentenceBuffer.trim();
+        sentenceBuffer = '';
+
+        if (isFirstSentence) {
+          wsHandler.sendJSON(ws, { type: 'speaking' });
+          isFirstSentence = false;
+        }
+
+        // Check for barge-in before TTS
+        if (isAborted()) {
+          console.log(`⏹️ [App] Barge-in before TTS`);
+          break;
+        }
+
+        // Convert sentence to speech and stream immediately
+        try {
+          let isFirstChunkForSentence = true;
+          await tts.streamSynthesize(
+            sentence,
+            (audioChunk) => {
+              if (!isAborted()) {
+                // Track first TTS chunk latency
+                if (isFirstChunkForSentence) {
+                  metrics.markTTSFirstChunk(sessionId);
+                  isFirstChunkForSentence = false;
+                }
+                wsHandler.sendAudio(ws, audioChunk);
+              }
+            },
+            () => {} // onDone - sentence complete
+          );
+        } catch (ttsError) {
+          console.error(`❌ [TTS] Sentence synthesis failed:`, ttsError.message);
+        }
+      }
+    }
+
+    // Mark LLM complete (streaming finished)
+    metrics.markLLMComplete(sessionId);
+
+    // Process any remaining text in buffer (if not aborted)
+    if (sentenceBuffer.trim().length > 0 && !isAborted()) {
+      try {
+        let isFirstChunkFinal = true;
+        await tts.streamSynthesize(
+          sentenceBuffer.trim(),
+          (audioChunk) => {
+            if (!isAborted()) {
+              if (isFirstChunkFinal) {
+                metrics.markTTSFirstChunk(sessionId);
+                isFirstChunkFinal = false;
+              }
+              wsHandler.sendAudio(ws, audioChunk);
+            }
+          },
+          () => {}
+        );
+      } catch (ttsError) {
+        console.error(`❌ [TTS] Final sentence synthesis failed:`, ttsError.message);
+      }
+    }
+
+    // Mark TTS complete and finalize metrics
+    metrics.markTTSComplete(sessionId);
+    metrics.finalizeRequest(sessionId);
+
+    // Signal audio complete
+    wsHandler.sendJSON(ws, { type: 'audio_end' });
+
+    // 5. Store AI response in memory (even if partially completed)
+    if (fullResponse.trim()) {
+      memory.addMessage(sessionId, 'assistant', fullResponse);
+
+      // 6. Send text response to client
+      wsHandler.sendResponse(ws, fullResponse);
+    }
+
+    console.log(`🤖 [Nova] ${fullResponse}`);
     console.log(`📊 [App] Session ${sessionId}: ${memory.getMessageCount(sessionId)} messages in memory`);
 
   } catch (error) {
