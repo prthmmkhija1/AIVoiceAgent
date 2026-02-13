@@ -1,652 +1,467 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Voice Agent</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    
     body {
-      font-family: 'Segoe UI', Tahoma, sans-serif;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
       background: #0f0f1a;
       color: #e0e0e0;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 40px 20px;
+      padding: 2rem;
     }
-
-    h1 {
-      font-size: 1.8em;
-      margin-bottom: 8px;
-      color: #fff;
-    }
-
-    .subtitle {
-      color: #888;
-      margin-bottom: 30px;
-      font-size: 0.9em;
-    }
-
-    /* Status indicator */
+    h1 { font-size: 1.6rem; margin-bottom: 0.3rem; color: #fff; }
+    .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
     .status-bar {
       display: flex;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 24px;
-      padding: 10px 20px;
-      background: #1a1a2e;
-      border-radius: 20px;
-      font-size: 0.85em;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.85rem;
     }
-
-    .status-dot {
-      width: 10px;
-      height: 10px;
+    .dot {
+      width: 10px; height: 10px;
       border-radius: 50%;
-      background: #ff4444;
+      background: #555;
       transition: background 0.3s;
     }
-
-    .status-dot.connected { background: #44ff44; }
-    .status-dot.connecting { background: #ffaa44; animation: pulse 1s infinite; }
-    .status-dot.reconnecting { background: #ff8844; animation: pulse 0.7s infinite; }
-    .status-dot.listening { background: #44aaff; animation: pulse 1s infinite; }
-    .status-dot.thinking  { background: #ffaa44; animation: pulse 0.5s infinite; }
-    .status-dot.speaking  { background: #aa44ff; animation: pulse 0.8s infinite; }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-
-    /* Mic button */
-    .mic-container {
-      margin: 20px 0 30px;
-    }
-
-    .mic-btn {
-      width: 100px;
-      height: 100px;
-      border-radius: 50%;
-      border: 3px solid #333;
-      background: #1a1a2e;
-      color: #888;
-      font-size: 2.5em;
-      cursor: pointer;
-      transition: all 0.3s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .mic-btn:hover { border-color: #44aaff; color: #44aaff; }
-    .mic-btn.active {
-      border-color: #ff4444;
-      color: #ff4444;
-      background: #2a1a1e;
-      animation: pulse 1.5s infinite;
-    }
-
-    /* Chat log */
-    .chat-container {
-      width: 100%;
-      max-width: 600px;
-      flex: 1;
-    }
-
-    .chat-log {
-      background: #1a1a2e;
-      border-radius: 12px;
-      padding: 20px;
-      min-height: 300px;
-      max-height: 500px;
-      overflow-y: auto;
-      margin-bottom: 12px;
-    }
-
-    .message {
-      margin-bottom: 16px;
-      padding: 10px 14px;
-      border-radius: 10px;
-      max-width: 85%;
-      line-height: 1.5;
-      font-size: 0.95em;
-    }
-
-    .message.user {
-      background: #1e3a5f;
-      margin-left: auto;
-      text-align: right;
-      border-bottom-right-radius: 4px;
-    }
-
-    .message.assistant {
-      background: #2a2a4a;
-      margin-right: auto;
-      border-bottom-left-radius: 4px;
-    }
-
-    .message .label {
-      font-size: 0.7em;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 4px;
-    }
-
-    .message.interim {
-      opacity: 0.5;
-      font-style: italic;
-    }
+    .dot.connected { background: #4caf50; }
+    .dot.error { background: #f44336; }
+    .dot.speaking { background: #ff9800; animation: pulse 0.8s infinite alternate; }
+    @keyframes pulse { to { opacity: 0.4; } }
 
     .controls {
       display: flex;
-      gap: 10px;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
       justify-content: center;
     }
-
-    .controls button {
-      padding: 8px 16px;
+    button {
+      padding: 0.6rem 1.4rem;
+      border: none;
       border-radius: 8px;
-      border: 1px solid #333;
-      background: #1a1a2e;
-      color: #aaa;
+      font-size: 0.9rem;
       cursor: pointer;
-      font-size: 0.8em;
       transition: all 0.2s;
+      font-weight: 500;
     }
-
-    .controls button:hover {
-      border-color: #44aaff;
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #btnMic {
+      background: #4caf50;
+      color: #fff;
+      min-width: 160px;
+    }
+    #btnMic:hover:not(:disabled) { background: #45a049; }
+    #btnMic.recording {
+      background: #f44336;
+      animation: pulse 0.8s infinite alternate;
+    }
+    #btnInterrupt {
+      background: #ff9800;
       color: #fff;
     }
+    #btnInterrupt:hover:not(:disabled) { background: #e68900; }
+    #btnClear {
+      background: #333;
+      color: #ccc;
+    }
+    #btnClear:hover:not(:disabled) { background: #444; }
+    #btnEnd {
+      background: #f44336;
+      color: #fff;
+    }
+    #btnEnd:hover:not(:disabled) { background: #d32f2f; }
 
-    .error {
-      color: #ff6b6b;
-      background: #2a1a1e;
-      padding: 10px;
-      border-radius: 8px;
-      margin-bottom: 10px;
-      font-size: 0.85em;
+    .chat-box {
+      width: 100%;
+      max-width: 640px;
+      flex: 1;
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 1rem;
+      overflow-y: auto;
+      max-height: 55vh;
+      min-height: 200px;
+      border: 1px solid #2a2a3e;
+    }
+    .msg {
+      margin-bottom: 0.75rem;
+      padding: 0.6rem 0.9rem;
+      border-radius: 10px;
+      max-width: 85%;
+      line-height: 1.45;
+      font-size: 0.9rem;
+      word-wrap: break-word;
+    }
+    .msg.user {
+      background: #2d4a7a;
+      margin-left: auto;
+      border-bottom-right-radius: 3px;
+    }
+    .msg.assistant {
+      background: #2a2a3e;
+      margin-right: auto;
+      border-bottom-left-radius: 3px;
+    }
+    .msg.system {
+      background: transparent;
+      color: #666;
+      font-size: 0.78rem;
+      text-align: center;
+      max-width: 100%;
+      padding: 0.3rem;
+    }
+    .msg .label {
+      font-size: 0.7rem;
+      color: #888;
+      margin-bottom: 0.2rem;
+    }
+    .interim {
+      color: #999;
+      font-style: italic;
+    }
+
+    .metrics {
+      margin-top: 1rem;
+      width: 100%;
+      max-width: 640px;
+      font-size: 0.75rem;
+      color: #666;
+      text-align: center;
     }
   </style>
 </head>
 <body>
 
   <h1>🎙️ AI Voice Agent</h1>
-  <p class="subtitle">Powered by Deepgram STT/TTS + Grok LLM</p>
+  <p class="subtitle">Speak into your microphone to chat with Nova</p>
 
   <div class="status-bar">
-    <div class="status-dot" id="statusDot"></div>
+    <span class="dot" id="statusDot"></span>
     <span id="statusText">Disconnected</span>
+    <span id="sessionInfo" style="color:#555; margin-left:0.5rem;"></span>
   </div>
 
-  <div class="mic-container">
-    <button class="mic-btn" id="micBtn" onclick="toggleMic()">🎤</button>
+  <div class="controls">
+    <button id="btnMic" disabled>🎤 Start Speaking</button>
+    <button id="btnInterrupt" disabled>⏹ Interrupt</button>
+    <button id="btnClear" disabled>🗑 Clear</button>
+    <button id="btnEnd" disabled>❌ Disconnect</button>
+    <!-- Connect button style -->
+    <style>
+      .connect-btn { background: #4caf50 !important; }
+      .connect-btn:hover { background: #45a049 !important; }
+    </style>
   </div>
 
-  <div class="chat-container">
-    <div class="chat-log" id="chatLog"></div>
-    <div class="controls">
-      <button onclick="connectWS()">🔌 Connect</button>
-      <button onclick="clearChat()">🗑️ Clear Chat</button>
-      <button onclick="disconnectWS()">❌ Disconnect</button>
-    </div>
-  </div>
+  <div class="chat-box" id="chatBox"></div>
+  <div class="metrics" id="metrics"></div>
 
   <script>
-    // ─── State ───────────────────────────────────────────────
+    const WS_URL = `ws://${location.hostname || 'localhost'}:8080`;
+    const SAMPLE_RATE = 16000;
+
     let ws = null;
+    let audioCtx = null;
     let mediaStream = null;
-    let audioContext = null;
-    let processor = null;      // ScriptProcessor (fallback)
-    let workletNode = null;    // AudioWorklet (modern)
+    let scriptProcessor = null;
+    let sessionId = null;
     let isRecording = false;
-    let useAudioWorklet = true; // Try AudioWorklet first
+    let interimEl = null;
 
-    const WS_URL = 'ws://localhost:8080';
+    // Audio playback
+    let playbackCtx = null;
+    let audioQueue = [];
+    let audioSampleRate = 24000;
+    let isReceivingAudio = false;
+    let audioChunks = [];
 
-    // ─── Auto-Reconnect Configuration ────────────────────────
-    let reconnectAttempts = 0;
-    let reconnectTimeout = null;
-    let intentionalDisconnect = false;
-    const RECONNECT_CONFIG = {
-      maxAttempts: 10,
-      initialDelayMs: 1000,
-      maxDelayMs: 30000,
-      backoffMultiplier: 1.5,
-    };
-
-    /**
-     * Calculate reconnect delay with exponential backoff
-     */
-    function getReconnectDelay() {
-      const delay = RECONNECT_CONFIG.initialDelayMs * Math.pow(RECONNECT_CONFIG.backoffMultiplier, reconnectAttempts);
-      return Math.min(delay, RECONNECT_CONFIG.maxDelayMs);
-    }
-
-    /**
-     * Schedule a reconnection attempt
-     */
-    function scheduleReconnect() {
-      if (intentionalDisconnect) return;
-      if (reconnectAttempts >= RECONNECT_CONFIG.maxAttempts) {
-        addErrorMessage(`Failed to reconnect after ${RECONNECT_CONFIG.maxAttempts} attempts. Click Connect to retry.`);
-        return;
-      }
-
-      const delay = getReconnectDelay();
-      reconnectAttempts++;
-      
-      setStatus('reconnecting', `Reconnecting in ${Math.round(delay / 1000)}s... (${reconnectAttempts}/${RECONNECT_CONFIG.maxAttempts})`);
-      addSystemMessage(`Connection lost. Reconnecting in ${Math.round(delay / 1000)} seconds...`);
-
-      reconnectTimeout = setTimeout(() => {
-        connectWS(true);  // true = is reconnect attempt
-      }, delay);
-    }
-
-    /**
-     * Cancel any pending reconnect
-     */
-    function cancelReconnect() {
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
-      }
-    }
-
-    // ─── DOM Elements ────────────────────────────────────────
+    // DOM
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
-    const micBtn = document.getElementById('micBtn');
-    const chatLog = document.getElementById('chatLog');
+    const sessionInfo = document.getElementById('sessionInfo');
+    const btnMic = document.getElementById('btnMic');
+    const btnInterrupt = document.getElementById('btnInterrupt');
+    const btnClear = document.getElementById('btnClear');
+    const btnEnd = document.getElementById('btnEnd');
+    const chatBox = document.getElementById('chatBox');
+    const metricsEl = document.getElementById('metrics');
 
-    // ─── Audio Playback ──────────────────────────────────────
-    let audioQueue = [];        // Queue of audio buffers to play
-    let isPlaying = false;
-    let playbackContext = null;
-    let currentAudioSource = null;  // Track current playing source for barge-in
-
-    /**
-     * Stop any currently playing audio (barge-in support)
-     */
-    function stopAudioPlayback() {
-      audioQueue = [];
-      isPlaying = false;
-      if (currentAudioSource) {
-        try {
-          currentAudioSource.stop();
-        } catch (e) { /* Already stopped */ }
-        currentAudioSource = null;
-      }
-    }
-
-    // ─── WebSocket Connection ────────────────────────────────
-    function connectWS(isReconnect = false) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        addSystemMessage('Already connected');
-        return;
-      }
-
-      // Cancel any pending reconnect
-      cancelReconnect();
-      intentionalDisconnect = false;
-
-      setStatus('connecting', isReconnect ? 'Reconnecting...' : 'Connecting...');
+    // ─── Connect ──────────────────────────────────────────
+    function connect() {
+      setStatus('connecting', 'Connecting...');
       ws = new WebSocket(WS_URL);
-
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
-        reconnectAttempts = 0;  // Reset on successful connect
-        setStatus('connected', 'Connected — Press the mic to start talking');
-        addSystemMessage(isReconnect ? 'Reconnected to AI Voice Agent' : 'Connected to AI Voice Agent');
+        setStatus('connected', 'Connected');
+        btnMic.disabled = false;
+        btnClear.disabled = false;
+        btnEnd.disabled = false;
       };
 
-      ws.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          // Binary = audio from TTS
-          audioQueue.push(event.data);
-          if (!isPlaying) playNextAudio();
+      ws.onmessage = (evt) => {
+        if (typeof evt.data === 'string') {
+          handleJsonMessage(JSON.parse(evt.data));
         } else {
-          // JSON = text messages
-          const msg = JSON.parse(event.data);
-          handleServerMessage(msg);
+          handleAudioData(evt.data);
         }
       };
 
-      ws.onclose = (event) => {
+      ws.onclose = () => {
+        setStatus('disconnected', 'Disconnected');
         stopRecording();
-        
-        // Only auto-reconnect if not intentional and not a clean close
-        if (!intentionalDisconnect && event.code !== 1000) {
-          scheduleReconnect();
-        } else {
-          setStatus('disconnected', 'Disconnected');
-        }
+        btnMic.disabled = true;
+        btnInterrupt.disabled = true;
+        btnClear.disabled = true;
+        btnEnd.disabled = false;
+        btnEnd.textContent = '🔌 Connect';
+        btnEnd.classList.add('connect-btn');
+        sessionId = null;
+        addSystemMsg('Session ended. Click Connect to start a new conversation.');
       };
 
-      ws.onerror = (error) => {
-        setStatus('disconnected', 'Connection error');
-        addErrorMessage('WebSocket error. Is the server running?');
+      ws.onerror = () => {
+        setStatus('error', 'Connection error');
       };
     }
 
-    function disconnectWS() {
-      intentionalDisconnect = true;
-      cancelReconnect();
-      reconnectAttempts = 0;
-      
-      if (ws) {
-        try {
-          ws.send(JSON.stringify({ type: 'end' }));
-        } catch (e) { /* Ignore if already closed */ }
-        ws.close(1000, 'User disconnect');  // 1000 = normal close
-        ws = null;
-      }
-      stopRecording();
-      setStatus('disconnected', 'Disconnected');
-    }
-
-    // ─── Handle Server Messages ──────────────────────────────
-    function handleServerMessage(msg) {
-      switch (msg.type) {
+    // ─── Handle JSON messages ─────────────────────────────
+    function handleJsonMessage(data) {
+      switch (data.type) {
         case 'connected':
-          console.log('Session:', msg.sessionId);
+          sessionId = data.sessionId;
+          sessionInfo.textContent = `Session: ${sessionId.slice(0, 8)}...`;
+          addSystemMsg(`Connected: ${data.message}`);
           break;
 
         case 'transcript':
-          // Show what the user is saying
-          updateInterimTranscript(msg.text, msg.isFinal);
+          if (data.isFinal) {
+            if (interimEl) { interimEl.remove(); interimEl = null; }
+            addMsg('user', data.text);
+          } else {
+            showInterim(data.text);
+          }
           break;
 
         case 'response':
-          // Show AI response text
-          addMessage('assistant', msg.text);
+          addMsg('assistant', data.text);
           break;
 
         case 'thinking':
-          setStatus('thinking', 'Nova is thinking...');
+          setStatus('speaking', 'Nova is thinking...');
+          addSystemMsg('💭 Thinking...');
           break;
 
         case 'speaking':
           setStatus('speaking', 'Nova is speaking...');
+          btnInterrupt.disabled = false;
           break;
 
         case 'audio_start':
-          audioQueue = [];      // Clear any leftover audio
-          isPlaying = false;
+          isReceivingAudio = true;
+          audioChunks = [];
+          if (data.sampleRate) audioSampleRate = data.sampleRate;
           break;
 
         case 'audio_end':
-          // All audio chunks received, start playing
-          setStatus('connected', 'Connected — Press the mic to talk');
+          isReceivingAudio = false;
+          btnInterrupt.disabled = true;
+          setStatus('connected', 'Connected');
+          playAudioChunks();
           break;
 
         case 'audio_interrupted':
-          // Barge-in: stop current audio playback
-          stopAudioPlayback();
-          setStatus('listening', 'Listening... Speak now!');
+          isReceivingAudio = false;
+          audioChunks = [];
+          btnInterrupt.disabled = true;
+          setStatus('connected', 'Connected');
+          addSystemMsg('⏹ Response interrupted');
           break;
 
         case 'error':
-          addErrorMessage(msg.message);
+          addSystemMsg(`❌ ${data.message}`);
           break;
       }
     }
 
-    // ─── Microphone Handling ─────────────────────────────────
-    async function toggleMic() {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addErrorMessage('Connect to the server first!');
-        return;
-      }
-
-      if (isRecording) {
-        stopRecording();
-      } else {
-        await startRecording();
+    // ─── Audio playback ───────────────────────────────────
+    function handleAudioData(arrayBuffer) {
+      if (isReceivingAudio) {
+        audioChunks.push(new Uint8Array(arrayBuffer));
       }
     }
 
+    function playAudioChunks() {
+      if (audioChunks.length === 0) return;
+
+      // Merge all chunks
+      const totalLen = audioChunks.reduce((s, c) => s + c.length, 0);
+      const merged = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const chunk of audioChunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      audioChunks = [];
+
+      // Convert linear16 (int16) to float32
+      const int16 = new Int16Array(merged.buffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+      }
+
+      // Play via Web Audio API
+      if (!playbackCtx) playbackCtx = new AudioContext({ sampleRate: audioSampleRate });
+      const buf = playbackCtx.createBuffer(1, float32.length, audioSampleRate);
+      buf.copyToChannel(float32, 0);
+      const src = playbackCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(playbackCtx.destination);
+      src.start();
+    }
+
+    // ─── Microphone ───────────────────────────────────────
     async function startRecording() {
       try {
-        // Barge-in: Stop any playing audio and notify server
-        if (isPlaying) {
-          stopAudioPlayback();
-          ws.send(JSON.stringify({ type: 'interrupt' }));
-        }
-
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            sampleRate: 16000,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-          }
+          audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: true }
         });
 
-        audioContext = new AudioContext({ sampleRate: 16000 });
-        const source = audioContext.createMediaStreamSource(mediaStream);
+        audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        const source = audioCtx.createMediaStreamSource(mediaStream);
 
-        // Try AudioWorklet first (modern, runs on separate thread)
-        if (useAudioWorklet && audioContext.audioWorklet) {
-          try {
-            await audioContext.audioWorklet.addModule('audio-processor.js');
-            
-            workletNode = new AudioWorkletNode(audioContext, 'microphone-processor');
-            workletNode.port.onmessage = (event) => {
-              if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
-              if (event.data.type === 'audio') {
-                ws.send(event.data.buffer);
-              }
-            };
-            
-            source.connect(workletNode);
-            workletNode.connect(audioContext.destination);
-            
-            console.log('🎤 Using AudioWorklet (modern API)');
-          } catch (workletError) {
-            console.warn('AudioWorklet failed, falling back to ScriptProcessor:', workletError);
-            useAudioWorklet = false;
-            // Fall through to ScriptProcessor
+        // ScriptProcessor for raw PCM (4096 buffer)
+        scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+        scriptProcessor.onaudioprocess = (e) => {
+          if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+          const float32 = e.inputBuffer.getChannelData(0);
+          // Convert float32 → int16
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
-        }
-        
-        // Fallback: ScriptProcessor (deprecated but widely supported)
-        if (!useAudioWorklet || !workletNode) {
-          processor = audioContext.createScriptProcessor(4096, 1, 1);
-          processor.onaudioprocess = (event) => {
-            if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(int16.buffer);
+        };
 
-            const inputData = event.inputBuffer.getChannelData(0);
-            // Convert Float32 → Int16 (linear16)
-            const int16 = new Int16Array(inputData.length);
-            for (let i = 0; i < inputData.length; i++) {
-              const s = Math.max(-1, Math.min(1, inputData[i]));
-              int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
-
-            ws.send(int16.buffer);
-          };
-
-          source.connect(processor);
-          processor.connect(audioContext.destination);
-          
-          console.log('🎤 Using ScriptProcessor (fallback)');
-        }
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioCtx.destination);
 
         isRecording = true;
-        micBtn.classList.add('active');
-        setStatus('listening', 'Listening... Speak now!');
-
-      } catch (error) {
-        addErrorMessage('Microphone access denied. Please allow mic access.');
-        console.error('Mic error:', error);
+        btnMic.textContent = '⏹ Stop Speaking';
+        btnMic.classList.add('recording');
+        setStatus('connected', 'Listening...');
+      } catch (err) {
+        addSystemMsg(`❌ Microphone error: ${err.message}`);
       }
     }
 
     function stopRecording() {
+      const wasRecording = isRecording;
       isRecording = false;
-      micBtn.classList.remove('active');
-
-      // Stop AudioWorklet
-      if (workletNode) {
-        workletNode.port.postMessage({ type: 'stop' });
-        workletNode.disconnect();
-        workletNode = null;
-      }
-      
-      // Stop ScriptProcessor (fallback)
-      if (processor) {
-        processor.disconnect();
-        processor = null;
-      }
-      if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-      }
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(t => t.stop());
-        mediaStream = null;
-      }
-
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        setStatus('connected', 'Connected — Press the mic to talk');
+      if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+      btnMic.textContent = '🎤 Start Speaking';
+      btnMic.classList.remove('recording');
+      if (wasRecording && ws && ws.readyState === WebSocket.OPEN) {
+        setStatus('connected', 'Ready — Tap Start Speaking when you\'re ready');
+        addSystemMsg('🎤 Microphone stopped. Tap "Start Speaking" to continue the conversation.');
       }
     }
 
-    // ─── Audio Playback ──────────────────────────────────────
-    async function playNextAudio() {
-      if (audioQueue.length === 0) {
-        isPlaying = false;
-        return;
-      }
-
-      isPlaying = true;
-
-      // Combine all queued chunks into one buffer
-      const combined = combineBuffers(audioQueue);
-      audioQueue = [];
-
-      try {
-        if (!playbackContext) {
-          playbackContext = new AudioContext({ sampleRate: 24000 });
-        }
-
-        // Convert Int16 → Float32 for Web Audio API
-        const int16 = new Int16Array(combined);
-        const float32 = new Float32Array(int16.length);
-        for (let i = 0; i < int16.length; i++) {
-          float32[i] = int16[i] / 0x7FFF;
-        }
-
-        const audioBuffer = playbackContext.createBuffer(1, float32.length, 24000);
-        audioBuffer.getChannelData(0).set(float32);
-
-        const source = playbackContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(playbackContext.destination);
-
-        source.onended = () => {
-          currentAudioSource = null;
-          // Check if more audio arrived while playing
-          if (audioQueue.length > 0) {
-            playNextAudio();
-          } else {
-            isPlaying = false;
-          }
-        };
-
-        currentAudioSource = source;  // Track for barge-in
-        source.start();
-      } catch (error) {
-        console.error('Playback error:', error);
-        isPlaying = false;
-      }
-    }
-
-    function combineBuffers(buffers) {
-      const totalLength = buffers.reduce((acc, buf) => acc + buf.byteLength, 0);
-      const combined = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const buf of buffers) {
-        combined.set(new Uint8Array(buf), offset);
-        offset += buf.byteLength;
-      }
-      return combined.buffer;
-    }
-
-    // ─── UI Helpers ──────────────────────────────────────────
-    let interimElement = null;
-
-    function updateInterimTranscript(text, isFinal) {
-      if (isFinal) {
-        // Remove interim and add final message
-        if (interimElement) {
-          interimElement.remove();
-          interimElement = null;
-        }
-        addMessage('user', text);
-      } else {
-        // Show/update interim transcript
-        if (!interimElement) {
-          interimElement = document.createElement('div');
-          interimElement.className = 'message user interim';
-          chatLog.appendChild(interimElement);
-        }
-        interimElement.innerHTML = `<div class="label">You (listening...)</div>${text}`;
-        chatLog.scrollTop = chatLog.scrollHeight;
-      }
-    }
-
-    function addMessage(role, text) {
-      const div = document.createElement('div');
-      div.className = `message ${role}`;
-      const label = role === 'user' ? 'You' : '🤖 Nova';
-      div.innerHTML = `<div class="label">${label}</div>${text}`;
-      chatLog.appendChild(div);
-      chatLog.scrollTop = chatLog.scrollHeight;
-    }
-
-    function addSystemMessage(text) {
-      const div = document.createElement('div');
-      div.style.cssText = 'text-align:center; color:#666; font-size:0.8em; margin:8px 0;';
-      div.textContent = `— ${text} —`;
-      chatLog.appendChild(div);
-      chatLog.scrollTop = chatLog.scrollHeight;
-    }
-
-    function addErrorMessage(text) {
-      const div = document.createElement('div');
-      div.className = 'error';
-      div.textContent = `⚠️ ${text}`;
-      chatLog.appendChild(div);
-      chatLog.scrollTop = chatLog.scrollHeight;
-    }
-
-    function clearChat() {
-      chatLog.innerHTML = '';
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'clear' }));
-        addSystemMessage('Chat cleared');
-      }
-    }
-
+    // ─── UI Helpers ───────────────────────────────────────
     function setStatus(state, text) {
-      statusDot.className = 'status-dot ' + state;
+      statusDot.className = 'dot';
+      if (state === 'connected' || state === 'speaking') statusDot.classList.add(state);
+      else if (state === 'error') statusDot.classList.add('error');
       statusText.textContent = text;
     }
 
-    // ─── Auto-connect on load ────────────────────────────────
-    window.addEventListener('load', () => {
-      addSystemMessage('Click "Connect" to start, then press the mic button');
-    });
-  </script>
+    function addMsg(role, text) {
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = role === 'user' ? '🧑 You' : '🤖 Nova';
+      div.appendChild(label);
+      div.appendChild(document.createTextNode(text));
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
 
+    function addSystemMsg(text) {
+      const div = document.createElement('div');
+      div.className = 'msg system';
+      div.textContent = text;
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function showInterim(text) {
+      if (!interimEl) {
+        interimEl = document.createElement('div');
+        interimEl.className = 'msg user interim';
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.textContent = '🧑 You (listening...)';
+        interimEl.appendChild(label);
+        interimEl.appendChild(document.createTextNode(''));
+        chatBox.appendChild(interimEl);
+      }
+      interimEl.lastChild.textContent = text;
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // ─── Button handlers ──────────────────────────────────
+    btnMic.addEventListener('click', () => {
+      if (isRecording) stopRecording();
+      else startRecording();
+    });
+
+    btnInterrupt.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'interrupt' }));
+      }
+    });
+
+    btnClear.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clear' }));
+        chatBox.innerHTML = '';
+        addSystemMsg('Conversation cleared');
+      }
+    });
+
+    btnEnd.addEventListener('click', () => {
+      if (btnEnd.classList.contains('connect-btn')) {
+        // Reconnect
+        btnEnd.textContent = '❌ Disconnect';
+        btnEnd.classList.remove('connect-btn');
+        chatBox.innerHTML = '';
+        connect();
+      } else {
+        // Disconnect
+        stopRecording();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'end' }));
+          ws.close();
+        }
+      }
+    });
+
+    // ─── Auto-connect ─────────────────────────────────────
+    connect();
+  </script>
 </body>
 </html>
