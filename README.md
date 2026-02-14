@@ -9,39 +9,44 @@ A real-time AI voice conversation agent built with **Python**. It enables natura
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          WebSocket Client                          │
-│                  (any app sending/receiving audio)                  │
-└──────────────┬──────────────────────────────────┬───────────────────┘
-               │  binary: mic audio (16kHz PCM)   │  binary: TTS audio (24kHz PCM)
-               │  json: control messages           │  json: transcripts, status
-               ▼                                   ▲
-┌──────────────────────────────────────────────────────────────────────┐
-│                     WebSocket Server (ws_handler.py)                │
-│              • Session management (per-client UUID)                 │
-│              • Binary/JSON protocol routing                        │
-│              • Chunked audio streaming + heartbeat                 │
-└──────┬───────────────────────────────────────────────────┬──────────┘
-       │                                                   ▲
-       ▼                                                   │
-┌──────────────┐    ┌──────────────┐    ┌─────────────────────────────┐
-│  Deepgram    │    │   LLM        │    │  Deepgram TTS               │
-│  STT         │    │   Provider   │    │  (tts.py)                   │
-│  (stt.py)    │    │ (provider.py)│    │                             │
-│              │    │              │    │  • Aura Asteria voice       │
-│  • Nova-2    │    │  • Grok-3    │    │  • Sentence-level synthesis │
-│  • Streaming │───▶│    (X.AI)    │───▶│  • Retry w/ backoff        │
-│  • VAD       │    │  • OpenAI-   │    │  • 24kHz linear16 output   │
-│  • Interim + │    │    compat SDK│    └─────────────────────────────┘
-│    final     │    │              │
-│  • Keepalive │    │  • Streaming │    ┌─────────────────────────────┐
-│  • Reconnect │    │  • Retry     │    │  Conversation Memory        │
-└──────────────┘    │  • Persona ◀─────│  (conversation_memory.py)   │
-                    │    injection │    │                             │
-                    └──────────────┘    │  • Per-session history      │
-                                        │  • Sliding window (max 20) │
-                                        │  • Optional summarization  │
-                                        └─────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                            WebSocket Client                              │
+│                    (any app sending/receiving audio)                      │
+└───────────────────┬───────────────────────────────┬───────────────────────┘
+                    │                               │
+                    │  binary: mic audio (16kHz)     │  binary: TTS audio (24kHz)
+                    │  json:   control messages      │  json:   transcripts, status
+                    ▼                               ▲
+┌───────────────────────────────────────────────────────────────────────────┐
+│                      WebSocket Server (ws_handler.py)                    │
+│                                                                          │
+│          • Session management (per-client UUID)                          │
+│          • Binary / JSON protocol routing                                │
+│          • Chunked audio streaming + heartbeat                           │
+└───────────────────┬───────────────────────────────┬───────────────────────┘
+                    │                               ▲
+                    ▼                               │
+┌───────────────────────┐  ┌───────────────────────┐  ┌───────────────────────┐
+│    Deepgram STT       │  │    Grok LLM           │  │    Deepgram TTS       │
+│    (stt.py)           │  │    (provider.py)       │  │    (tts.py)           │
+│                       │  │                       │  │                       │
+│  • Nova-2 model       │  │  • Grok-3 (X.AI)     │  │  • Aura Asteria voice │
+│  • Streaming          │─▶│  • OpenAI-compat SDK  │─▶│  • Sentence-level     │
+│  • VAD events         │  │  • Token streaming    │  │    synthesis           │
+│  • Interim + final    │  │  • Retry w/ backoff   │  │  • Retry w/ backoff   │
+│  • Keepalive          │  │  • Persona injection  │  │  • 24kHz linear16     │
+│  • Auto-reconnect     │  │                       │  │                       │
+└───────────────────────┘  └───────────┬───────────┘  └───────────────────────┘
+                                       │
+                                       ▼
+                           ┌───────────────────────────┐
+                           │   Conversation Memory      │
+                           │  (conversation_memory.py)  │
+                           │                            │
+                           │  • Per-session history     │
+                           │  • Sliding window (max 20) │
+                           │  • Optional summarization  │
+                           └───────────────────────────┘
 ```
 
 ### Data Flow
@@ -82,31 +87,39 @@ A real-time AI voice conversation agent built with **Python**. It enables natura
 ## Project Structure
 
 ```
-voice-agent/
-├── main.py                                 # Entry point — orchestrates all services
-├── requirements.txt                        # Python dependencies
+AIVoiceAgent/
+│
+├── main.py                          # Entry point — orchestrates all services
+├── requirements.txt                 # Python dependencies
 ├── README.md
+│
 └── app/
     ├── __init__.py
+    │
     ├── config/
     │   ├── __init__.py
-    │   └── config.py                       # Central configuration (API keys, models, settings)
+    │   └── config.py                # Central configuration (API keys, models, settings)
+    │
     ├── ws/
     │   ├── __init__.py
-    │   └── ws_handler.py                   # WebSocket server (binary audio + JSON control)
+    │   └── ws_handler.py            # WebSocket server (binary audio + JSON control)
+    │
     └── services/
         ├── __init__.py
+        │
         ├── deepgram/
         │   ├── __init__.py
-        │   ├── stt.py                      # Deepgram streaming Speech-to-Text
-        │   └── tts.py                      # Deepgram Text-to-Speech (with retry)
+        │   ├── stt.py               # Deepgram streaming Speech-to-Text
+        │   └── tts.py               # Deepgram Text-to-Speech (with retry)
+        │
         ├── llm/
         │   ├── __init__.py
-        │   ├── provider.py                 # Grok LLM provider (OpenAI-compatible SDK)
-        │   └── persona.py                  # AI persona definition & system prompt
+        │   ├── provider.py          # Grok LLM provider (OpenAI-compatible SDK)
+        │   └── persona.py           # AI persona definition & system prompt
+        │
         └── memory/
             ├── __init__.py
-            └── conversation_memory.py      # Per-session conversation history management
+            └── conversation_memory.py   # Per-session conversation history management
 ```
 
 ---
