@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nova — AI Voice Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ═══════════════════════════════════════════════════════
+       DESIGN TOKENS
+       ═══════════════════════════════════════════════════════ */
+    :root {
+      --bg:         #08090d;
+      --bg-grad:    radial-gradient(ellipse at 50% 0%, #12142a 0%, #08090d 70%);
+      --surface:    #111320;
+      --surface2:   #181b2e;
+      --surface3:   #1f2340;
+      --border:     rgba(255,255,255,.06);
+      --border-hi:  rgba(255,255,255,.12);
+      --text:       #eaecf5;
+      --text-dim:   #6b7094;
+      --text-mid:   #9ba1c0;
+      --accent:     #7c6aff;
+      --accent-soft:rgba(124,106,255,.15);
+      --accent-glow:rgba(124,106,255,.40);
+      --green:      #34d399;
+      --green-soft: rgba(52,211,153,.12);
+      --red:        #f87171;
+      --red-soft:   rgba(248,113,113,.12);
+      --yellow:     #fbbf24;
+      --yellow-soft:rgba(251,191,36,.12);
+      --orange:     #fb923c;
+      --radius:     14px;
+      --radius-sm:  8px;
+      --shadow:     0 4px 24px rgba(0,0,0,.4);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      background-image: var(--bg-grad);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* ═══════════════════ HEADER ═══════════════════ */
+    header {
+      width: 100%;
+      padding: .9rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(8,9,13,.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 50;
+    }
+    .brand { display: flex; align-items: center; gap: .55rem; }
+    .brand-icon {
+      width: 32px; height: 32px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      display: grid; place-items: center;
+      font-size: 15px; box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .brand h1 { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; }
+    .brand h1 span { color: var(--text-dim); font-weight: 400; }
+
+    .header-right { display: flex; align-items: center; gap: .8rem; }
+    #connStatus {
+      font-size: .72rem; font-weight: 500;
+      padding: .22rem .65rem;
+      border-radius: 999px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; gap: .35rem;
+      transition: all .3s;
+    }
+    #connStatus::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-dim); display: block; transition: background .3s;
+    }
+    #connStatus.connected { border-color: rgba(52,211,153,.3); color: var(--green); }
+    #connStatus.connected::before { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    #connStatus.disconnected { color: var(--text-dim); }
+    #connStatus.connecting { border-color: rgba(251,191,36,.3); color: var(--yellow); }
+    #connStatus.connecting::before { background: var(--yellow); animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .btn-settings {
+      background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-dim); cursor: pointer; padding: .4rem;
+      display: grid; place-items: center; transition: all .2s;
+    }
+    .btn-settings:hover { border-color: var(--border-hi); color: var(--text); background: var(--surface2); }
+    .btn-settings svg { width: 16px; height: 16px; }
+
+    /* ═══════════════════ LAYOUT ═══════════════════ */
+    .app {
+      flex: 1; display: flex; flex-direction: column;
+      max-width: 840px; width: 100%; margin: 0 auto;
+      padding: 0 1rem;
+    }
+
+    /* ═══════════════════ VOICE ORB ═══════════════════ */
+    .orb-section {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 2.5rem 0 1.5rem;
+      position: relative;
+    }
+    .orb-container {
+      position: relative; width: 160px; height: 160px;
+      display: grid; place-items: center;
+    }
+    /* Animated rings */
+    .orb-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 1.5px solid transparent;
+      transition: all .6s cubic-bezier(.22,1,.36,1);
+    }
+    .orb-ring.r1 { inset: -10px; }
+    .orb-ring.r2 { inset: -24px; }
+    .orb-ring.r3 { inset: -40px; }
+
+    /* State: idle */
+    .orb-container .orb-ring { border-color: var(--border); opacity: .4; }
+
+    /* State: listening */
+    .orb-container.listening .orb-ring.r1 { border-color: rgba(52,211,153,.3); animation: ring-spin 6s linear infinite; }
+    .orb-container.listening .orb-ring.r2 { border-color: rgba(52,211,153,.15); animation: ring-spin 10s linear infinite reverse; }
+    .orb-container.listening .orb-ring.r3 { border-color: rgba(52,211,153,.08); animation: ring-spin 14s linear infinite; }
+    .orb-container.listening .orb-core { background: radial-gradient(circle, #34d399 0%, #059669 100%); box-shadow: 0 0 50px rgba(52,211,153,.35), 0 0 100px rgba(52,211,153,.15); }
+
+    /* State: thinking */
+    .orb-container.thinking .orb-ring.r1 { border-color: rgba(251,191,36,.3); animation: ring-spin 3s linear infinite; }
+    .orb-container.thinking .orb-ring.r2 { border-color: rgba(251,191,36,.15); animation: ring-spin 5s linear infinite reverse; }
+    .orb-container.thinking .orb-ring.r3 { border-color: rgba(251,191,36,.08); animation: ring-spin 7s linear infinite; }
+    .orb-container.thinking .orb-core { background: radial-gradient(circle, #fbbf24 0%, #d97706 100%); box-shadow: 0 0 50px rgba(251,191,36,.35), 0 0 100px rgba(251,191,36,.15); animation: orb-think 1.5s ease-in-out infinite; }
+
+    /* State: speaking */
+    .orb-container.speaking .orb-ring.r1 { border-color: rgba(124,106,255,.4); animation: ring-spin 4s linear infinite; }
+    .orb-container.speaking .orb-ring.r2 { border-color: rgba(124,106,255,.2); animation: ring-spin 6s linear infinite reverse; }
+    .orb-container.speaking .orb-ring.r3 { border-color: rgba(124,106,255,.1); animation: ring-spin 8s linear infinite; }
+    .orb-container.speaking .orb-core { background: radial-gradient(circle, #7c6aff 0%, #5b4cd8 100%); box-shadow: 0 0 50px var(--accent-glow), 0 0 100px rgba(124,106,255,.18); animation: orb-speak .8s ease-in-out infinite; }
+
+    .orb-core {
+      width: 100px; height: 100px; border-radius: 50%;
+      background: radial-gradient(circle, #2a2d48, #1a1d30);
+      box-shadow: 0 0 40px rgba(0,0,0,.5);
+      transition: all .6s cubic-bezier(.22,1,.36,1);
+      position: relative; z-index: 2;
+    }
+
+    @keyframes ring-spin { to { transform: rotate(360deg); } }
+    @keyframes orb-think { 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.06); } }
+    @keyframes orb-speak { 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.1); } }
+
+    /* Waveform canvas behind orb */
+    #waveCanvas {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 280px; height: 280px;
+      pointer-events: none; z-index: 1;
+      opacity: .7;
+    }
+
+    .orb-label {
+      margin-top: 1.2rem;
+      font-size: .82rem; font-weight: 500;
+      color: var(--text-dim);
+      display: flex; align-items: center; gap: .4rem;
+      transition: color .3s;
+    }
+    .orb-label.active { color: var(--text); }
+
+    /* ═══════════════════ TRANSCRIPT ═══════════════════ */
+    #liveTranscript {
+      text-align: center;
+      min-height: 1.6rem;
+      padding: .5rem 1.2rem;
+      font-size: .88rem; color: var(--text-dim);
+      font-style: italic;
+      transition: all .3s;
+      max-width: 600px; margin: 0 auto;
+    }
+    #liveTranscript.active { color: var(--text); font-style: normal; }
+
+    /* ═══════════════════ CONVERSATION ═══════════════════ */
+    .conv-wrapper {
+      flex: 1; display: flex; flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-top: .8rem;
+      overflow: hidden;
+      min-height: 220px;
+      max-height: 40vh;
+    }
+    .conv-header {
+      padding: .6rem 1rem;
+      font-size: .72rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .conv-header .msg-count { font-weight: 400; font-variant-numeric: tabular-nums; }
+
+    #conversation {
+      flex: 1; overflow-y: auto;
+      display: flex; flex-direction: column;
+      gap: .5rem;
+      padding: .8rem 1rem;
+    }
+    .msg {
+      max-width: 82%; padding: .65rem .9rem;
+      border-radius: 12px; font-size: .88rem; line-height: 1.55;
+      animation: msgIn .3s cubic-bezier(.22,1,.36,1);
+    }
+    @keyframes msgIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+    .msg.user {
+      align-self: flex-end;
+      background: linear-gradient(135deg, var(--accent), #6558e6);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.assistant {
+      align-self: flex-start;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .msg.system {
+      align-self: center;
+      font-size: .72rem; color: var(--text-dim);
+      background: transparent; padding: .2rem .5rem;
+    }
+    .msg .label {
+      font-size: .62rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .05em;
+      margin-bottom: .15rem; opacity: .6;
+    }
+    .msg.assistant .label { color: var(--accent); opacity: .9; }
+
+    /* ═══════════════════ CONTROLS ═══════════════════ */
+    .controls-section {
+      padding: 1.2rem 0 1.5rem;
+      display: flex; flex-direction: column; align-items: center; gap: .8rem;
+    }
+    .controls-row {
+      display: flex; align-items: center; gap: .7rem;
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: .4rem;
+      border: none; border-radius: 10px;
+      font-size: .8rem; font-weight: 500;
+      cursor: pointer; transition: all .2s;
+      font-family: inherit; padding: .55rem 1.1rem;
+      position: relative; overflow: hidden;
+    }
+    .btn::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(rgba(255,255,255,.08), transparent);
+      opacity: 0; transition: opacity .2s;
+    }
+    .btn:hover::after { opacity: 1; }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn:disabled::after { display: none; }
+
+    /* Mic Button — hero CTA */
+    #btnMic {
+      width: 64px; height: 64px; border-radius: 50%;
+      padding: 0; display: grid; place-items: center;
+      font-size: 1.5rem;
+      background: linear-gradient(135deg, var(--accent), #6558e6);
+      color: #fff;
+      box-shadow: 0 4px 20px var(--accent-glow);
+      transition: all .25s cubic-bezier(.22,1,.36,1);
+    }
+    #btnMic:hover:not(:disabled) { transform: scale(1.08); box-shadow: 0 6px 30px var(--accent-glow); }
+    #btnMic.recording {
+      background: linear-gradient(135deg, #f87171, #dc2626);
+      box-shadow: 0 4px 20px rgba(248,113,113,.35);
+      animation: rec-glow 1.5s ease-in-out infinite;
+    }
+    @keyframes rec-glow {
+      0%,100% { box-shadow: 0 4px 20px rgba(248,113,113,.35); }
+      50% { box-shadow: 0 6px 40px rgba(248,113,113,.5); }
+    }
+
+    #btnInterrupt {
+      background: var(--surface2); color: var(--orange);
+      border: 1px solid rgba(251,146,60,.2);
+    }
+    #btnInterrupt:hover:not(:disabled) { background: rgba(251,146,60,.1); border-color: rgba(251,146,60,.4); }
+
+    #btnClear {
+      background: var(--surface2); color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+    #btnClear:hover:not(:disabled) { background: var(--surface3); color: var(--text); }
+
+    /* kbd style labels */
+    .btn .kbd {
+      font-size: .62rem; padding: .1rem .3rem;
+      background: rgba(255,255,255,.08);
+      border-radius: 3px; margin-left: .15rem;
+      font-weight: 600;
+    }
+
+    /* ═══════════════════ SETTINGS PANEL ═══════════════════ */
+    .settings-panel {
+      display: none;
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.6);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .settings-panel.open { display: grid; place-items: center; }
+    .settings-card {
+      background: var(--surface);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      width: 90%;
+      max-width: 380px;
+      box-shadow: var(--shadow);
+    }
+    .settings-card h2 {
+      font-size: .95rem; font-weight: 600; margin-bottom: 1rem;
+      display: flex; align-items: center; gap: .4rem;
+    }
+    .settings-card label { display: block; font-size: .75rem; color: var(--text-dim); margin-bottom: .25rem; margin-top: .7rem; }
+    .settings-card input {
+      width: 100%; padding: .45rem .6rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font-size: .82rem; font-family: inherit;
+      outline: none; transition: border-color .2s;
+    }
+    .settings-card input:focus { border-color: var(--accent); }
+    .settings-actions {
+      display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.2rem;
+    }
+    .settings-actions .btn { font-size: .78rem; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+
+    /* ═══════════════════ SCROLLBAR ═══════════════════ */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
+
+    /* ═══════════════════ RESPONSIVE ═══════════════════ */
+    @media (max-width: 480px) {
+      .orb-container { width: 120px; height: 120px; }
+      .orb-core { width: 72px; height: 72px; }
+      .orb-ring.r1 { inset: -8px; }
+      .orb-ring.r2 { inset: -18px; }
+      .orb-ring.r3 { inset: -30px; }
+      #waveCanvas { width: 200px; height: 200px; }
+      .conv-wrapper { max-height: 35vh; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ HEADER ═══ -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">N</div>
+      <h1>Nova <span>Voice Agent</span></h1>
+    </div>
+    <div class="header-right">
+      <span id="connStatus" class="disconnected">Disconnected</span>
+      <button class="btn-settings" id="btnSettings" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══ MAIN ═══ -->
+  <div class="app">
+
+    <!-- Voice Orb -->
+    <div class="orb-section">
+      <div class="orb-container" id="orbContainer">
+        <div class="orb-ring r1"></div>
+        <div class="orb-ring r2"></div>
+        <div class="orb-ring r3"></div>
+        <canvas id="waveCanvas" width="280" height="280"></canvas>
+        <div class="orb-core"></div>
+      </div>
+      <div class="orb-label" id="statusLabel">
+        <span id="statusText">Tap the mic to begin</span>
+      </div>
+    </div>
+
+    <!-- Live Transcript -->
+    <div id="liveTranscript"></div>
+
+    <!-- Controls -->
+    <div class="controls-section">
+      <div class="controls-row">
+        <button class="btn" id="btnClear" disabled title="Clear history">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          Clear
+        </button>
+
+        <button class="btn" id="btnMic" title="Start / Stop">🎤</button>
+
+        <button class="btn" id="btnInterrupt" disabled title="Interrupt Nova">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          Stop
+        </button>
+      </div>
+    </div>
+
+    <!-- Conversation -->
+    <div class="conv-wrapper">
+      <div class="conv-header">
+        <span>Conversation</span>
+        <span class="msg-count" id="msgCount">0 messages</span>
+      </div>
+      <div id="conversation"></div>
+    </div>
+  </div>
+
+  <!-- ═══ SETTINGS MODAL ═══ -->
+  <div class="settings-panel" id="settingsPanel">
+    <div class="settings-card">
+      <h2>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        Connection Settings
+      </h2>
+      <label>WebSocket URL</label>
+      <input id="cfgUrl" type="text" value="ws://localhost:8080" spellcheck="false" />
+      <div class="settings-actions">
+        <button class="btn btn-ghost" id="btnSettingsClose">Cancel</button>
+        <button class="btn btn-primary" id="btnSettingsSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       JAVASCRIPT (all audio/WS logic preserved)
+       ═══════════════════════════════════════════════════════ -->
+  <script>
+    // ─── DOM refs ──────────────────────────────────────────
+    const $conv     = document.getElementById('conversation');
+    const $live     = document.getElementById('liveTranscript');
+    const $status   = document.getElementById('statusText');
+    const $label    = document.getElementById('statusLabel');
+    const $conn     = document.getElementById('connStatus');
+    const $mic      = document.getElementById('btnMic');
+    const $int      = document.getElementById('btnInterrupt');
+    const $clear    = document.getElementById('btnClear');
+    const $cfgUrl   = document.getElementById('cfgUrl');
+    const $orb      = document.getElementById('orbContainer');
+    const $msgCount = document.getElementById('msgCount');
+    const $canvas   = document.getElementById('waveCanvas');
+    const ctx2d     = $canvas.getContext('2d');
+
+    // ─── State ─────────────────────────────────────────────
+    let ws = null;
+    let sessionId = null;
+    let audioCtx = null;
+    let mediaStream = null;
+    let scriptProcessor = null;
+    let isRecording = false;
+    let agentState = 'idle';
+    let msgTotal = 0;
+
+    // TTS playback
+    let ttsQueue = [];
+    let ttsSampleRate = 24000;
+    let isPlaying = false;
+    let ttsCollecting = false;
+    let currentTtsBuffer = [];
+
+    // Waveform
+    let micAnalyser = null;
+    let waveAnimId = null;
+
+    // ─── Helpers ───────────────────────────────────────────
+    function setStatus(state, text) {
+      agentState = state;
+      $status.textContent = text;
+      $label.classList.toggle('active', state !== 'idle');
+      // Orb state
+      $orb.className = 'orb-container' + (state !== 'idle' ? ' ' + state : '');
+    }
+
+    function setConn(state) {
+      $conn.className = state;
+      $conn.textContent = state === 'connected' ? 'Connected'
+                        : state === 'connecting' ? 'Connecting…'
+                        : 'Disconnected';
+    }
+
+    function updateMsgCount() {
+      $msgCount.textContent = msgTotal + ' message' + (msgTotal !== 1 ? 's' : '');
+    }
+
+    function addMsg(role, text) {
+      const el = document.createElement('div');
+      el.className = 'msg ' + role;
+      if (role !== 'system') {
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.textContent = role === 'user' ? 'You' : 'Nova';
+        el.appendChild(label);
+      }
+      const body = document.createElement('div');
+      body.textContent = text;
+      el.appendChild(body);
+      $conv.appendChild(el);
+      $conv.scrollTop = $conv.scrollHeight;
+      if (role !== 'system') { msgTotal++; updateMsgCount(); }
+    }
+
+    // ─── Waveform Visualization ────────────────────────────
+    function startWaveAnim() {
+      const w = $canvas.width, h = $canvas.height;
+      const cx = w / 2, cy = h / 2;
+
+      function draw() {
+        waveAnimId = requestAnimationFrame(draw);
+        ctx2d.clearRect(0, 0, w, h);
+
+        if (agentState === 'idle') return;
+
+        let data = new Uint8Array(64).fill(128);
+        if (micAnalyser && (agentState === 'listening')) {
+          data = new Uint8Array(micAnalyser.frequencyBinCount);
+          micAnalyser.getByteTimeDomainData(data);
+        }
+
+        const slices = data.length;
+        const radius = 62;
+        const color = agentState === 'listening' ? 'rgba(52,211,153,' :
+                      agentState === 'thinking'  ? 'rgba(251,191,36,' :
+                      agentState === 'speaking'  ? 'rgba(124,106,255,' : 'rgba(107,112,148,';
+
+        // Draw circular waveform
+        for (let ring = 0; ring < 2; ring++) {
+          const alpha = ring === 0 ? '.5)' : '.2)';
+          const r = radius + ring * 18;
+          ctx2d.beginPath();
+          ctx2d.strokeStyle = color + alpha;
+          ctx2d.lineWidth = 1.5;
+          for (let i = 0; i <= slices; i++) {
+            const v = (data[i % slices] - 128) / 128;
+            const amp = agentState === 'thinking' ? Math.sin(Date.now() / 300 + i * .3) * .3 :
+                        agentState === 'speaking' ? Math.sin(Date.now() / 200 + i * .5) * .45 : v;
+            const dist = r + amp * 25;
+            const angle = (i / slices) * Math.PI * 2 - Math.PI / 2;
+            const x = cx + Math.cos(angle) * dist;
+            const y = cy + Math.sin(angle) * dist;
+            if (i === 0) ctx2d.moveTo(x, y);
+            else ctx2d.lineTo(x, y);
+          }
+          ctx2d.closePath();
+          ctx2d.stroke();
+        }
+      }
+      draw();
+    }
+
+    function stopWaveAnim() {
+      if (waveAnimId) { cancelAnimationFrame(waveAnimId); waveAnimId = null; }
+      ctx2d.clearRect(0, 0, $canvas.width, $canvas.height);
+    }
+
+    // ─── WebSocket ─────────────────────────────────────────
+    function connect() {
+      if (ws) return;
+      const url = $cfgUrl.value.trim();
+      setConn('connecting');
+
+      ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        setConn('connected');
+        $clear.disabled = false;
+      };
+
+      ws.onmessage = (evt) => {
+        if (evt.data instanceof ArrayBuffer) handleAudioChunk(evt.data);
+        else handleJsonMsg(JSON.parse(evt.data));
+      };
+
+      ws.onerror = (e) => console.error('[WS] Error', e);
+
+      ws.onclose = () => {
+        ws = null; sessionId = null;
+        setConn('disconnected');
+        setStatus('idle', 'Disconnected — tap mic to reconnect');
+        $mic.innerHTML = '🎤'; $mic.classList.remove('recording');
+        $int.disabled = true; $clear.disabled = true;
+        stopMic(); stopWaveAnim();
+      };
+    }
+
+    function disconnect() {
+      if (ws) {
+        try { ws.send(JSON.stringify({ type: 'end' })); } catch(_) {}
+        ws.close(); ws = null;
+      }
+    }
+
+    // ─── Handle JSON messages ──────────────────────────────
+    function handleJsonMsg(msg) {
+      switch (msg.type) {
+        case 'connected':
+          sessionId = msg.sessionId;
+          addMsg('system', 'Session started');
+          setStatus('listening', 'Listening…');
+          break;
+
+        case 'transcript':
+          $live.textContent = msg.text || '';
+          $live.classList.toggle('active', !msg.isFinal);
+          if (msg.isFinal && msg.text) {
+            addMsg('user', msg.text);
+            $live.textContent = ''; $live.classList.remove('active');
+          }
+          break;
+
+        case 'thinking':
+          setStatus('thinking', 'Nova is thinking…');
+          $int.disabled = false;
+          break;
+
+        case 'speaking':
+          setStatus('speaking', 'Nova is speaking…');
+          break;
+
+        case 'audio_start':
+          ttsSampleRate = msg.sampleRate || 24000;
+          ttsCollecting = true; currentTtsBuffer = [];
+          break;
+
+        case 'audio_end':
+          ttsCollecting = false;
+          if (currentTtsBuffer.length > 0) {
+            ttsQueue.push(mergeFloat32Arrays(currentTtsBuffer));
+            currentTtsBuffer = [];
+            playNextInQueue();
+          }
+          break;
+
+        case 'audio_interrupted':
+          setStatus('listening', 'Listening…');
+          $int.disabled = true;
+          stopTtsPlayback();
+          addMsg('system', 'Response interrupted');
+          break;
+
+        case 'response':
+          addMsg('assistant', msg.text);
+          setStatus('listening', 'Listening…');
+          $int.disabled = true;
+          break;
+
+        case 'error':
+          addMsg('system', '⚠ ' + msg.message);
+          break;
+
+        default:
+          console.log('[WS] Unknown message:', msg);
+      }
+    }
+
+    // ─── Handle binary TTS audio ───────────────────────────
+    function handleAudioChunk(arrayBuf) {
+      const int16 = new Int16Array(arrayBuf);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+
+      if (ttsCollecting) currentTtsBuffer.push(float32);
+      else { ttsQueue.push(float32); playNextInQueue(); }
+    }
+
+    function mergeFloat32Arrays(arrays) {
+      let total = 0;
+      for (const a of arrays) total += a.length;
+      const merged = new Float32Array(total);
+      let off = 0;
+      for (const a of arrays) { merged.set(a, off); off += a.length; }
+      return merged;
+    }
+
+    // ─── TTS Audio Playback ────────────────────────────────
+    function ensureAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: ttsSampleRate });
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function playNextInQueue() {
+      if (isPlaying || ttsQueue.length === 0) return;
+      isPlaying = true;
+      playFloat32(ttsQueue.shift(), () => { isPlaying = false; playNextInQueue(); });
+    }
+
+    function playFloat32(float32, onEnded) {
+      ensureAudioCtx();
+      if (audioCtx.sampleRate !== ttsSampleRate) {
+        audioCtx.close();
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: ttsSampleRate });
+      }
+      const buf = audioCtx.createBuffer(1, float32.length, ttsSampleRate);
+      buf.getChannelData(0).set(float32);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      src.onended = onEnded;
+      src.start();
+    }
+
+    function stopTtsPlayback() {
+      ttsQueue = []; currentTtsBuffer = [];
+      ttsCollecting = false; isPlaying = false;
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    }
+
+    // ─── Microphone Capture ────────────────────────────────
+    async function startMic() {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, sampleRate: { ideal: 16000 },
+                   echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+
+        const micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = micCtx.createMediaStreamSource(mediaStream);
+
+        // Analyser for waveform vis
+        micAnalyser = micCtx.createAnalyser();
+        micAnalyser.fftSize = 128;
+        source.connect(micAnalyser);
+
+        const bufSize = 4096;
+        scriptProcessor = micCtx.createScriptProcessor(bufSize, 1, 1);
+        scriptProcessor._micCtx = micCtx;
+
+        scriptProcessor.onaudioprocess = (e) => {
+          if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
+          const float32 = e.inputBuffer.getChannelData(0);
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            let s = Math.max(-1, Math.min(1, float32[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          ws.send(int16.buffer);
+        };
+
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(micCtx.destination);
+        isRecording = true;
+
+        startWaveAnim();
+      } catch (err) {
+        console.error('[Mic] Error:', err);
+        addMsg('system', '⚠ Microphone access denied or unavailable.');
+      }
+    }
+
+    function stopMic() {
+      isRecording = false; micAnalyser = null;
+      if (scriptProcessor) {
+        scriptProcessor.disconnect();
+        if (scriptProcessor._micCtx) scriptProcessor._micCtx.close();
+        scriptProcessor = null;
+      }
+      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    }
+
+    // ─── Button Handlers ───────────────────────────────────
+    $mic.addEventListener('click', async () => {
+      if (!isRecording) {
+        connect(); await startMic();
+        $mic.innerHTML = '⏹'; $mic.classList.add('recording');
+        setStatus('listening', 'Listening…');
+      } else {
+        disconnect(); stopMic(); stopTtsPlayback(); stopWaveAnim();
+        $mic.innerHTML = '🎤'; $mic.classList.remove('recording');
+        $int.disabled = true;
+        setStatus('idle', 'Tap the mic to begin');
+      }
+    });
+
+    $int.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'interrupt' }));
+        stopTtsPlayback();
+      }
+    });
+
+    $clear.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clear' }));
+        $conv.innerHTML = ''; msgTotal = 0; updateMsgCount();
+        addMsg('system', 'Conversation cleared');
+      }
+    });
+
+    // ─── Settings Modal ────────────────────────────────────
+    const $settingsPanel = document.getElementById('settingsPanel');
+    document.getElementById('btnSettings').addEventListener('click', () => $settingsPanel.classList.add('open'));
+    document.getElementById('btnSettingsClose').addEventListener('click', () => $settingsPanel.classList.remove('open'));
+    document.getElementById('btnSettingsSave').addEventListener('click', () => $settingsPanel.classList.remove('open'));
+    $settingsPanel.addEventListener('click', (e) => { if (e.target === $settingsPanel) $settingsPanel.classList.remove('open'); });
+
+    // ─── Cleanup ───────────────────────────────────────────
+    window.addEventListener('beforeunload', () => { disconnect(); stopMic(); });
+  </script>
+</body>
+</html>
